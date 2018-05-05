@@ -12,18 +12,18 @@ namespace Jankiele
         FinishedPlaying,
         NowElected,
         NullMessage,
-        BMessageBroadcast
+        MyIntBroadcast,
+        LoserMessage,
+        IDReturn,
+        ProceedToNextStage
     }
-    enum JankielState
+    public enum JankielState
     {
         receivingIDs,
         elected,
-        dunno
-    }
-    enum InMIS
-    {
-        yes,
-        no,
-        dunno
+        donePlaying,
+        loser,
+        doneIDsReadyToExchangeInts,
+        doneExchangingInts
     }
 }
