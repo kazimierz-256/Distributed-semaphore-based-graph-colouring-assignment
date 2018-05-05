@@ -8,6 +8,22 @@ namespace Jankiele
 {
     public enum MessageType
     {
-        IDBroadcast, FinishedPlaying
+        IDBroadcast,
+        FinishedPlaying,
+        NowElected,
+        NullMessage,
+        BMessageBroadcast
+    }
+    enum JankielState
+    {
+        receivingIDs,
+        elected,
+        dunno
+    }
+    enum InMIS
+    {
+        yes,
+        no,
+        dunno
     }
 }

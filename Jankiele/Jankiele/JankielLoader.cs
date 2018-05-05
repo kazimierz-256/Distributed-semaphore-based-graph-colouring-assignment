@@ -24,16 +24,16 @@ namespace Jankiele
         {
             var random = new Random(0);
             var alreadyUsedIDs = new HashSet<int>();
-            var pool = 1;
+            var pool = int.MaxValue;
             int getNewID()
             {
                 var id = random.Next(pool);
                 while (alreadyUsedIDs.Contains(id))
-                    id = random.Next(pool *= 2);
+                    id = random.Next(pool);
                 alreadyUsedIDs.Add(id);
                 return id;
             }
-            return coordinates.Select(coords => new JankielPerson(coords, getNewID()));
+            return coordinates.Select(coords => new JankielPerson(coords, getNewID(), random.Next()));
         }
     }
 }

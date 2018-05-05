@@ -10,16 +10,16 @@ namespace Jankiele
     {
         private int senderID;
         private MessageType messageType;
-        private object personalObject;
+        private string messageContents;
 
-        public Message(int senderID, MessageType messageType, object personalObject)
+        public Message(int senderID, MessageType messageType, string messageContents)
         {
             this.senderID = senderID;
             this.messageType = messageType;
-            this.personalObject = personalObject;
+            this.messageContents = messageContents;
         }
         public int GetSenderID() => senderID;
         public MessageType GetMessageType() => messageType;
-        public object GetPersonalObject() => personalObject;
+        public string GetContents() => messageContents;
     }
 }
