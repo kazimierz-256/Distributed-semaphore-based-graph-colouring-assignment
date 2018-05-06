@@ -10,7 +10,7 @@ namespace Jankiele
 {
     public class JankielPerson
     {
-        private const int playingPeriodDuration = 2000;
+        private const int playingPeriodDuration = 5000;
         private Tuple<double, double> coords;
         private JankielPerson[] neighbours;
         private Dictionary<int, JankielPerson> idToJankiel;
@@ -18,9 +18,12 @@ namespace Jankiele
         private Dictionary<int, int> idToIndex;
         private Dictionary<int, int> indexToID;
         private ConcurrentQueue<Message> messages = new ConcurrentQueue<Message>();
+        private ISet<Message> archivedMessages = new HashSet<Message>();
         private Semaphore messageArrived = new Semaphore(0, int.MaxValue);
         private int myID;
         private Random random;
+
+        private void SendToID(int id, Message message) => neighbours[idToIndex[id]].SendMessage(message);
 
         private object messageQueuecreation = new object();
 
@@ -30,7 +33,7 @@ namespace Jankiele
             this.myID = myID;
             random = new Random(seed);
         }
-        private string DescribeOneself() => $"id{myID} [{coords.Item1}, {coords.Item2}]";
+        private string DescribeOneself() => $"[{coords.Item1}, {coords.Item2}]";
 
         public void AddNeighbours(IEnumerable<JankielPerson> neighbours)
         {
@@ -46,28 +49,12 @@ namespace Jankiele
             indexToID = new Dictionary<int, int>(n);
         }
 
-        public int GetID() => myID;
+        private int GetID() => myID;
         internal Tuple<double, double> GetCoordinates() => coords;
-        private void AddStageIfNecessary(int color, int stage)
-        {
-            lock (messageQueuecreation)
-            {
-                if (!messages.ContainsKey(color))
-                {
-                    messages.Add(color, new Dictionary<int, ConcurrentQueue<Message>>());
-                    messageArrived.Add(color, new Dictionary<int, Semaphore>());
-                }
-                if (!messages[color].ContainsKey(stage))
-                {
-
-                }
-            }
-        }
         public void SendMessage(Message message)
         {
-            AddStageIfNecessary(message.Stage);
-            messages[message.Stage].Enqueue(message);
-            messageArrived[message.Stage].Release(1);
+            messages.Enqueue(message);
+            messageArrived.Release(1);
         }
 
         public void Launch()
@@ -75,248 +62,450 @@ namespace Jankiele
             // check out rounds
             // send message
             var myState = JankielState.receivingIDs;
-            TimeSpan defaultTimeout = TimeSpan.FromMilliseconds(1000);
-            int myStage = 1;
-            int myRound = 1;
+            var defaultTimeout = TimeSpan.FromMilliseconds(3000);
             var neighboursThatArentDoneYet = neighbours.Length;
-
+            var expectedStages = (int)(2 * Math.Log(6));
+            var myStage = 0;
+            var myColor = 0;
             void displayStatus(string comment = "")
             {
-                Console.WriteLine($"Stage {myStage}, status of {DescribeOneself()} is {myState.ToString()}" + comment);
+                Console.WriteLine($"Color {myColor}, stage {myStage}, status of {DescribeOneself()} is {myState.ToString()}" + comment);
             }
-            void sendMessageToNeighboursSuchThat(MessageType type, string messageContents = "", Func<JankielState, bool> neighbourPredicate = null, int targetStage = -1, int targetRound = -1)
+            //void sendMessageToNeighboursSuchThat(
+            //    Func<JankielState, bool> neighbourPredicate,
+            //    Message message)
+            //{
+            //    for (int neighbourIndex = 0; neighbourIndex < neighbours.Length; neighbourIndex++)
+            //    {
+            //        if (neighbourPredicate == null
+            //            || neighbourPredicate(idToNeighbourState[indexToID[neighbourIndex]]))
+            //            neighbours[neighbourIndex].SendMessage(message);
+            //    }
+            //}
+            void receiveMessageWithin(
+                TimeSpan timeout,
+                Func<Message, ReadAction> consumerIsFinished)
             {
-                if (targetStage == -1)
-                    targetStage = myStage;
-                if (targetRound == -1)
-                    targetRound = myRound;
-                for (int neighbourIndex = 0; neighbourIndex < neighbours.Length; neighbourIndex++)
+                var toDelete = new List<Message>();
+                var stop = false;
+                foreach (var archivedMessage in archivedMessages)
                 {
-                    if (neighbourPredicate == null
-                        || neighbourPredicate(idToNeighbourState[indexToID[neighbourIndex]]))
-                        neighbours[neighbourIndex].SendMessage(new Message(myID, type, messageContents, targetStage, targetRound));
+                    switch (consumerIsFinished(archivedMessage))
+                    {
+                        case ReadAction.continueNext:
+                            break;
+                        case ReadAction.deleteAndContinueNext:
+                            toDelete.Add(archivedMessage);
+                            break;
+                        case ReadAction.deleteAndStop:
+                            toDelete.Add(archivedMessage);
+                            stop = true;
+                            break;
+                        case ReadAction.justStop:
+                            stop = true;
+                            break;
+                    }
+                    if (stop)
+                        break;
                 }
-            }
-            void receiveMessageWithin(TimeSpan timeout, int expectedNumOfMessagesUpperBound, Func<Message, bool> acceptingPredicate = null, int sourceStage = -1)
-            {
-                if (sourceStage == -1)
+                while (!stop)
                 {
-                    sourceStage = myStage;
-                }
-                AddStageIfNecessary(sourceStage);
-
-                for (int expectedMessages = expectedNumOfMessagesUpperBound; expectedMessages > 0;)
-                {
-                    //Console.WriteLine($"{DescribeOneself()} waits for incoming message...");
-                    var success = timeout == TimeSpan.MaxValue ? messageArrived[sourceStage].WaitOne() : messageArrived[sourceStage].WaitOne(timeout);
+                    var success = timeout == TimeSpan.MaxValue
+                        ? messageArrived.WaitOne()
+                        : messageArrived.WaitOne(timeout);
                     if (!success)
                     {
                         Console.WriteLine($"Time has exipred for {DescribeOneself()}");
                         return;
                     }
-                    success &= messages[sourceStage].TryDequeue(out Message message);
+                    success &= messages.TryDequeue(out Message message);
                     if (!success)
                         throw new Exception("Signaled a message, yet none received!");
-                    //Console.WriteLine($"{DescribeOneself()} unboxing message from {message.GetSenderID()}");
-                    // read message
-                    if (acceptingPredicate == null)
+                    archivedMessages.Add(message);
+                    switch (consumerIsFinished(message))
                     {
-                        expectedMessages--;
+                        case ReadAction.continueNext:
+                            break;
+                        case ReadAction.deleteAndContinueNext:
+                            toDelete.Add(message);
+                            break;
+                        case ReadAction.deleteAndStop:
+                            toDelete.Add(message);
+                            stop = true;
+                            break;
+                        case ReadAction.justStop:
+                            stop = true;
+                            break;
                     }
-                    else if (acceptingPredicate.Invoke(message))
-                    {
-                        expectedMessages--;
-                    }
-                    //else
-                    //{
-                    //    // this message wasn't expected, so it is enqueued once again
-                    //    messages[sourceStage].Enqueue(message);
-                    //}
                 }
-            }
-
-            void proceedToNextStage(int increase = 1)
-            {
-                myStage += increase;
-                sendMessageToNeighboursSuchThat(
-                MessageType.ProceedToNextStage,
-                string.Empty,
-                state => state != JankielState.donePlaying
-                );
-                receiveMessageWithin(TimeSpan.MaxValue, neighboursThatArentDoneYet, message => message.MessageType == MessageType.ProceedToNextStage);
-                ++myStage;
+                foreach (var messageToDelete in toDelete)
+                {
+                    archivedMessages.Remove(messageToDelete);
+                }
             }
 
             for (int neighbourIndex = 0; neighbourIndex < neighbours.Length; neighbourIndex++)
             {
                 //Console.WriteLine($"{DescribeOneself()} sends a messages to unknown index {neighbourIndex}");
                 neighbours[neighbourIndex].SendMessage(
-                    new Message(myID, MessageType.IDBroadcast, neighbourIndex.ToString(), myStage, myRound)
+                    new Message(myID, MessageType.IDBroadcast, neighbourIndex.ToString(), myStage, myColor)
                     );
             }
-            receiveMessageWithin(TimeSpan.MaxValue, neighboursThatArentDoneYet * 2, message =>
-               {
-                   if (message.MessageType == MessageType.IDBroadcast)
-                   {
-                       // ask the server to reply
-                       foreach (var neighbour in neighbours.Where(neighbour => neighbour.GetID() == message.SenderID))
-                       {
-                           neighbour.SendMessage(
-                               new Message(myID, MessageType.IDReturn, message.Contents, myStage, myRound)
-                               );
-                       }
-
-                       return true;
-                   }
-                   else if (message.MessageType == MessageType.IDReturn)
-                   {
-                       idToIndex[message.SenderID] = message.ContentsAsInt;
-                       indexToID[message.ContentsAsInt] = message.SenderID;
-                       return true;
-                   }
-                   return false;
-               });
-
-            proceedToNextStage();
-
-            if (indexToID.Count == neighboursThatArentDoneYet)
-                myState = JankielState.doneIDsReadyToExchangeInts;
-            displayStatus();
-            // received everyone's ID
-
-            // FIRST STAGE
-
-            var setOfAllSuperiorIDs = new HashSet<int>();
-            var waitingToFinishIDs = new HashSet<int>();
-            var chosenInt = random.Next();
-
-            sendMessageToNeighboursSuchThat(
-                MessageType.MyIntBroadcast,
-                chosenInt.ToString(),
-                state => state != JankielState.donePlaying);
-
-            receiveMessageWithin(TimeSpan.MaxValue, neighboursThatArentDoneYet, message =>
-             {
-                 if (message.MessageType == MessageType.MyIntBroadcast)
-                 {
-                     if (message.ContentsAsInt >= chosenInt)
-                     {
-                         // found a superior neighbour :(
-                         setOfAllSuperiorIDs.Add(message.SenderID);
-                     }
-                     return true;
-                 }
-                 return false;
-             });
-
-            proceedToNextStage();
-            myState = JankielState.doneExchangingInts;
-            displayStatus(" just finished exchanging ints");
-            var finishedPlayingOffset = 2;
-            var loserOffset = 1;
-            if (setOfAllSuperiorIDs.Count() == 0)
+            var stillCompetingNeighbours = new HashSet<int>();
+            var neighboursThatReturnedMessage = new HashSet<int>();
+            receiveMessageWithin(defaultTimeout, message =>
             {
-                myState = JankielState.elected;
-                // I am superior over my meighbours, buahahaha
-                sendMessageToNeighboursSuchThat(
-                    MessageType.NowElected,
-                    string.Empty,
-                    state => state != JankielState.donePlaying);
+                if (message.Color == myColor && message.Stage == myStage)
+                    switch (message.MessageType)
+                    {
+                        case MessageType.IDBroadcast:
+                            stillCompetingNeighbours.Add(message.SenderID);
+                            foreach (var neighbour in neighbours.Where(neighbour => neighbour.GetID() == message.SenderID))
+                            {
+                                neighbour.SendMessage(
+                                    new Message(myID, MessageType.IDReturn, message.Contents, myStage, myColor)
+                                    );
+                            }
+                            return ReadAction.deleteAndContinueNext;
+                        case MessageType.IDReturn:
+                            neighboursThatReturnedMessage.Add(message.SenderID);
+                            idToIndex[message.SenderID] = message.ContentsAsInt;
+                            indexToID[message.ContentsAsInt] = message.SenderID;
+                            return ReadAction.deleteAndContinueNext;
+                    }
+                return ReadAction.continueNext;
+            });
 
-                // i'm elected, play the music & notify neighbours
-                displayStatus();
-                // play the song!
-                Thread.Sleep(playingPeriodDuration);
-                myState = JankielState.donePlaying;
-                displayStatus();
-
-
-                sendMessageToNeighboursSuchThat(
-                    MessageType.FinishedPlaying,
-                    string.Empty,
-                    state => state != JankielState.donePlaying,
-                    myStage + finishedPlayingOffset);
+            if (stillCompetingNeighbours.SetEquals(neighboursThatReturnedMessage))
+            {
+                displayStatus($" exchanged IDs fine {stillCompetingNeighbours.Count}");
             }
             else
             {
-                // someone is superior over me, yet dunno whether it is elected :/
-                var isLoser = false;
-                receiveMessageWithin(defaultTimeout, setOfAllSuperiorIDs.Count, message =>
-                {
-                    if (message.MessageType == MessageType.NowElected)
-                    {
-                        waitingToFinishIDs.Add(message.SenderID);
-                        // indeed, a larger neighbour is really elected :(
-                        idToNeighbourState[message.SenderID] = JankielState.elected;
-                        isLoser = true;
-                        return true;
-                    }
-                    return false;
-                });
+                displayStatus(" made a mistake during ID exchange");
+                return;
+            }
+            // received everyone's ID
+            myState = JankielState.doneIDsReadyToExchangeInts;
+            var superiorNeighbours = new HashSet<int>();
+            var allStagesElected = new HashSet<int>();
 
-                if (isLoser)
+            for (myColor = 0; ; myColor++)
+            {
+                displayStatus(" processes next color");
+                if (myState == JankielState.loser)
                 {
-                    myState = JankielState.loser;
-                    sendMessageToNeighboursSuchThat(
-                        MessageType.LoserMessage,
-                        string.Empty,
-                        state => state != JankielState.elected,
-                        myStage + loserOffset);
-                    // i'm done here for this round, listening for winners to finish
-                    displayStatus(" is waiting for players to finish playing");
-                    receiveMessageWithin(TimeSpan.MaxValue, waitingToFinishIDs.Count(), message =>
+                    int participantsLeft = stillCompetingNeighbours.Count;
+                    displayStatus($" waits for {participantsLeft} messages");
+
+                    receiveMessageWithin(TimeSpan.MaxValue, message =>
                     {
-                        if (message.MessageType == MessageType.FinishedPlaying)
-                        {
-                            neighboursThatArentDoneYet--;
-                            waitingToFinishIDs.Remove(message.SenderID);
-                            idToNeighbourState[message.SenderID] = JankielState.donePlaying;
-                            return true;
-                        }
-                        return false;
-                    },
-                    myStage + finishedPlayingOffset);
-                    // now.. actively competing for next MIS!
-                    myState = JankielState.doneIDsReadyToExchangeInts;
-                    myRound++;
-                    myStage = 1;
-                    displayStatus(" is prepared for next round of MIS!");
-                    // send out ids
-                    sendMessageToNeighboursSuchThat(MessageType.IDBroadcast, myID.ToString(), _ => true);
-                }
-                else
-                {
-                    // not superior, but superior neighbours weren't elected
-                    // neither a winner neither a looser (neighbouring with larger vertices that have larger neighbours)
-                    // expecting messages from losers
-                    receiveMessageWithin(defaultTimeout, neighboursThatArentDoneYet, message =>
-                    {
-                        if (message.MessageType == MessageType.LoserMessage)
-                        {
-                            idToNeighbourState[message.SenderID] = JankielState.loser;
-                            if (message.ContentsAsInt >= chosenInt)
+                        if (message.Stage == -1 && message.Color == myColor)
+                            switch (message.MessageType)
                             {
-                                // found a superior neighbour :(
-                                setOfAllSuperiorIDs.Add(message.SenderID);
+                                case MessageType.ParticipatingInThisColor:
+                                    participantsLeft--;
+                                    displayStatus($" waits for {participantsLeft} messages received participant {message.SenderID}");
+
+                                    if (participantsLeft == 0)
+                                        return ReadAction.deleteAndStop;
+                                    else
+                                        return ReadAction.deleteAndContinueNext;
+                                case MessageType.FinishedPlayingCymbals:
+                                    stillCompetingNeighbours.Remove(message.SenderID);
+                                    participantsLeft--;
+                                    displayStatus($" waits for {participantsLeft} messages received finished playing by {message.SenderID}");
+
+                                    if (participantsLeft == 0)
+                                        return ReadAction.deleteAndStop;
+                                    else
+                                        return ReadAction.deleteAndContinueNext;
                             }
-                            return true;
-                        }
-                        return false;
-                    },
-                    myStage + loserOffset);
-                    // now, check if i'm superior and so on...
-                    if (setOfAllSuperiorIDs.Count > 0)
+                        if (message.Color < myColor)
+                            return ReadAction.deleteAndContinueNext;
+                        else
+                            return ReadAction.continueNext;
+                    });
+
+                }
+
+                //foreach (var id in activeNeighboursID.Except(elected))
+                //{
+                //    SendToID(id, new Message(myID, MessageType.AreYouReadyForThisColor, string.Empty, -1, myColor));
+                //}
+
+                //receiveMessageWithin(TimeSpan.MaxValue, message =>
+                //{
+                //    if (message.Color == myColor && message.Stage == -1)
+                //        switch (message.MessageType)
+                //        {
+                //            case MessageType.AreYouReadyForThisColor:
+
+                //                break;
+                //        }
+                //    return ReadAction.continueNext;
+                //});
+
+                var quitStage = false;
+                var previouslyParticipatingThisStage = new HashSet<int>(stillCompetingNeighbours);
+                var electedDuringThisStage = new HashSet<int>();
+                var electedDuringLastStage = new HashSet<int>();
+                for (myStage = 0; !quitStage; myStage++)
+                {
+                    var participatingThisStage = new HashSet<int>(previouslyParticipatingThisStage.Except(electedDuringLastStage));
+                    previouslyParticipatingThisStage = participatingThisStage;
+                    var notParticipating = new HashSet<int>();
+                    superiorNeighbours = new HashSet<int>();
+                    //elected = new HashSet<int>();
+
+                    var myInt = random.Next();
+                    displayStatus($" is preparing for Int exchange... chose {myInt}");
+                    if (participatingThisStage.Count > 0)
                     {
-                        // wait for next round
+                        foreach (var id in participatingThisStage)
+                        {
+                            SendToID(
+                                id,
+                                new Message(myID, MessageType.MyIntBroadcast, myInt.ToString(), myStage, myColor)
+                                );
+                        }
+
+                        int receivedInts = 0;
+                        receiveMessageWithin(TimeSpan.MaxValue, message =>
+                        {
+                            if (message.Stage == myStage && message.Color == myColor)
+                                switch (message.MessageType)
+                                {
+                                    case MessageType.Dunno:
+                                        displayStatus($" received dunno from {message.SenderID}");
+                                        return ReadAction.deleteAndContinueNext;
+                                    case MessageType.NotParticipatingInThisStage:
+                                        displayStatus($" received not participating from {message.SenderID}");
+                                        notParticipating.Add(message.SenderID);
+                                        participatingThisStage.Remove(message.SenderID);
+                                        if (participatingThisStage.Count == 0)
+                                            return ReadAction.deleteAndStop;
+                                        else
+                                            return ReadAction.deleteAndContinueNext;
+                                    case MessageType.MyIntBroadcast:
+                                        if (message.ContentsAsInt > myInt)
+                                        {
+                                            superiorNeighbours.Add(message.SenderID);
+                                        }
+                                        ++receivedInts;
+                                        if (receivedInts == participatingThisStage.Count)
+                                            return ReadAction.deleteAndStop;
+                                        else
+                                            return ReadAction.deleteAndContinueNext;
+                                }
+                            return ReadAction.continueNext;
+                        });
+                    }
+
+                    if (superiorNeighbours.Count == 0)
+                    {
+                        myState = JankielState.elected;
+                        foreach (var id in participatingThisStage)
+                        {
+                            SendToID(
+                                id,
+                                new Message(myID, MessageType.NowElected, string.Empty, myStage, myColor)
+                                );
+                            SendToID(
+                                id,
+                                new Message(myID, MessageType.NotParticipatingInThisStage, string.Empty, myStage + 1, myColor)
+                                );
+                        }
+
+                        displayStatus(" is now crashing cymbals...");
+                        Thread.Sleep(playingPeriodDuration);
+                        Console.Beep();
+                        myState = JankielState.donePlaying;
+                        foreach (var id in stillCompetingNeighbours.Except(allStagesElected))
+                        {
+                            SendToID(
+                                id,
+                                new Message(myID, MessageType.FinishedPlayingCymbals, string.Empty, -1, myColor + 1)
+                                );
+                        }
+                        displayStatus(" has done his job well");
+                        return;
                     }
                     else
                     {
-                        // become elected
+                        //int receivedSuperiorElections = 0;
+                        // someone else is superior, but is he the chosen one?
+                        receiveMessageWithin(defaultTimeout, message =>
+                        {
+                            if (message.Stage == myStage && message.Color == myColor)
+                                switch (message.MessageType)
+                                {
+                                    case MessageType.NowElected:
+                                        electedDuringThisStage.Add(message.SenderID);
+                                        //receivedSuperiorElections++;
+                                        //if (receivedSuperiorElections == superiorNeighbours.Count)
+                                        return ReadAction.deleteAndStop;
+                                        //else
+                                        //    return ReadAction.deleteAndContinueNext;
+                                }
+                            return ReadAction.continueNext;
+                        });
+
+                        if (electedDuringThisStage.Count > 0)
+                        {
+                            // I'm a loser, superiorneighbours > 0, at least one of them elected
+                            myState = JankielState.loser;
+                            displayStatus();
+                            foreach (var id in participatingThisStage.Except(electedDuringThisStage))
+                            {
+                                SendToID(id, new Message(myID, MessageType.NotParticipatingInThisStage, string.Empty, myStage + 1, myColor));
+                                SendToID(id, new Message(myID, MessageType.ParticipatingInThisColor, string.Empty, -1, myColor + 1));
+                            }
+                            // waiting for next color
+                            quitStage = true;
+                        }
+                        else
+                        {
+                            // superiorneighbours > 0, none elected
+                            myState = JankielState.dunno;
+                            displayStatus();
+
+                            foreach (var id in participatingThisStage)
+                            {
+                                SendToID(id, new Message(myID, MessageType.Dunno, string.Empty, myStage + 1, myColor));
+                            }
+                        }
                     }
-                    displayStatus(" dunno");
 
                 }
+                electedDuringLastStage = electedDuringThisStage;
+                allStagesElected.UnionWith(electedDuringThisStage);
             }
+            //var setOfAllSuperiorIDs = new HashSet<int>();
+            //var waitingToFinishIDs = new HashSet<int>();
+
+            //receiveMessageWithin(TimeSpan.MaxValue, neighboursThatArentDoneYet, message =>
+            //     {
+            //         if (message.MessageType == MessageType.MyIntBroadcast)
+            //         {
+            //             if (message.ContentsAsInt >= chosenInt)
+            //             {
+            //                 // found a superior neighbour :(
+            //                 setOfAllSuperiorIDs.Add(message.SenderID);
+            //             }
+            //             return true;
+            //         }
+            //         return false;
+            //     });
+
+            //proceedToNextStage();
+            //myState = JankielState.doneExchangingInts;
+            //displayStatus(" just finished exchanging ints");
+            //var finishedPlayingOffset = 2;
+            //var loserOffset = 1;
+            //if (setOfAllSuperiorIDs.Count() == 0)
+            //{
+            //    myState = JankielState.elected;
+            //    // I am superior over my meighbours, buahahaha
+            //    sendMessageToNeighboursSuchThat(
+            //        MessageType.NowElected,
+            //        string.Empty,
+            //        state => state != JankielState.donePlaying);
+
+            //    // i'm elected, play the music & notify neighbours
+            //    displayStatus();
+            //    // play the song!
+            //    Thread.Sleep(playingPeriodDuration);
+            //    myState = JankielState.donePlaying;
+            //    displayStatus();
+
+
+            //    sendMessageToNeighboursSuchThat(
+            //        MessageType.FinishedPlaying,
+            //        string.Empty,
+            //        state => state != JankielState.donePlaying,
+            //        myStage + finishedPlayingOffset);
+            //}
+            //else
+            //{
+            //    // someone is superior over me, yet dunno whether it is elected :/
+            //    var isLoser = false;
+            //    receiveMessageWithin(defaultTimeout, setOfAllSuperiorIDs.Count, message =>
+            //                {
+            //                    if (message.MessageType == MessageType.NowElected)
+            //                    {
+            //                        waitingToFinishIDs.Add(message.SenderID);
+            //                        // indeed, a larger neighbour is really elected :(
+            //                        idToNeighbourState[message.SenderID] = JankielState.elected;
+            //                        isLoser = true;
+            //                        return true;
+            //                    }
+            //                    return false;
+            //                });
+
+            //    if (isLoser)
+            //    {
+            //        myState = JankielState.loser;
+            //        sendMessageToNeighboursSuchThat(
+            //            MessageType.LoserMessage,
+            //            string.Empty,
+            //            state => state != JankielState.elected,
+            //            myStage + loserOffset);
+            //        // i'm done here for this round, listening for winners to finish
+            //        displayStatus(" is waiting for players to finish playing");
+            //        receiveMessageWithin(TimeSpan.MaxValue, waitingToFinishIDs.Count(), message =>
+            //                        {
+            //                            if (message.MessageType == MessageType.FinishedPlaying)
+            //                            {
+            //                                neighboursThatArentDoneYet--;
+            //                                waitingToFinishIDs.Remove(message.SenderID);
+            //                                idToNeighbourState[message.SenderID] = JankielState.donePlaying;
+            //                                return true;
+            //                            }
+            //                            return false;
+            //                        },
+            //                        myStage + finishedPlayingOffset);
+            //        // now.. actively competing for next MIS!
+            //        myState = JankielState.doneIDsReadyToExchangeInts;
+            //        myColor++;
+            //        myStage = 1;
+            //        displayStatus(" is prepared for next round of MIS!");
+            //        // send out ids
+            //        sendMessageToNeighboursSuchThat(MessageType.IDBroadcast, myID.ToString(), _ => true);
+            //    }
+            //    else
+            //    {
+            //        // not superior, but superior neighbours weren't elected
+            //        // neither a winner neither a looser (neighbouring with larger vertices that have larger neighbours)
+            //        // expecting messages from losers
+            //        receiveMessageWithin(defaultTimeout, neighboursThatArentDoneYet, message =>
+            //        {
+            //            if (message.MessageType == MessageType.LoserMessage)
+            //            {
+            //                idToNeighbourState[message.SenderID] = JankielState.loser;
+            //                if (message.ContentsAsInt >= chosenInt)
+            //                {
+            //                    // found a superior neighbour :(
+            //                    setOfAllSuperiorIDs.Add(message.SenderID);
+            //                }
+            //                return true;
+            //            }
+            //            return false;
+            //        },
+            //        myStage + loserOffset);
+            //        // now, check if i'm superior and so on...
+            //        if (setOfAllSuperiorIDs.Count > 0)
+            //        {
+            //            // wait for next round
+            //        }
+            //        else
+            //        {
+            //            // become elected
+            //        }
+            //        displayStatus(" dunno");
+
+            //    }
+            //}
 
             //proceedToNextStage(finishedPlayingOffset + 1);
             //displayStatus();

@@ -12,21 +12,24 @@ namespace Jankiele
         private MessageType messageType;
         private string messageContents;
         private int stage;
-        private int round;
+        private int color;
+        private InboxType inboxType;
 
-        public Message(int senderID, MessageType messageType, string messageContents, int stage, int round)
+        public Message(int senderID, MessageType messageType, string messageContents, int stage, int color, InboxType inboxType = InboxType.nothingSpecial)
         {
             this.senderID = senderID;
             this.messageType = messageType;
             this.messageContents = messageContents;
             this.stage = stage;
-            this.round = round;
+            this.color = color;
+            this.inboxType = inboxType;
         }
         public int SenderID => senderID;
         public MessageType MessageType => messageType;
         public int ContentsAsInt => int.Parse(messageContents);
         public string Contents => messageContents;
         public int Stage => stage;
-        public int Round => round;
+        public int Color => color;
+        public InboxType InboxType => InboxType;
     }
 }

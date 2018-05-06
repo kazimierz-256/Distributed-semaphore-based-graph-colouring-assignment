@@ -9,13 +9,16 @@ namespace Jankiele
     public enum MessageType
     {
         IDBroadcast,
-        FinishedPlaying,
+        FinishedPlayingCymbals,
         NowElected,
         NullMessage,
         MyIntBroadcast,
-        LoserMessage,
+        NotParticipatingInThisStage,
         IDReturn,
-        ProceedToNextStage
+        ProceedToNextStage,
+        AreYouReadyForThisColor,
+        ParticipatingInThisColor,
+        Dunno
     }
     public enum JankielState
     {
@@ -24,6 +27,18 @@ namespace Jankiele
         donePlaying,
         loser,
         doneIDsReadyToExchangeInts,
-        doneExchangingInts
+        doneExchangingInts,
+        dunno
+    }
+    public enum InboxType
+    {
+        nothingSpecial
+    }
+    public enum ReadAction
+    {
+        continueNext,
+        deleteAndContinueNext,
+        deleteAndStop,
+        justStop
     }
 }
