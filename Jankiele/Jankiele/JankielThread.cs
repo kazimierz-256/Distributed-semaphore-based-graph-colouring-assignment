@@ -59,6 +59,8 @@ namespace Jankiele
 
         public void Launch()
         {
+            // this solution has been designed to be as self-explanatory as possible
+            // especially if variables are named verbosily and LINQ technology is used
             var myState = JankielState.receivingIDs;
             var defaultTimeout = TimeSpan.FromMilliseconds(500);
             var neighboursThatArentDoneYet = neighbours.Length;
@@ -70,7 +72,7 @@ namespace Jankiele
             }
             void receiveMessageWithin(
                 TimeSpan timeout,
-                Func<Message, ReadAction> consumerIsFinished)
+                Func<Message, InboxAction> consumerIsFinished)
             {
                 var toDelete = new List<Message>();
                 var stop = false;
@@ -78,16 +80,16 @@ namespace Jankiele
                 {
                     switch (consumerIsFinished(archivedMessage))
                     {
-                        case ReadAction.continueNext:
+                        case InboxAction.continueNext:
                             break;
-                        case ReadAction.deleteAndContinueNext:
+                        case InboxAction.deleteAndContinueNext:
                             toDelete.Add(archivedMessage);
                             break;
-                        case ReadAction.deleteAndStop:
+                        case InboxAction.deleteAndStop:
                             toDelete.Add(archivedMessage);
                             stop = true;
                             break;
-                        case ReadAction.justStop:
+                        case InboxAction.justStop:
                             stop = true;
                             break;
                     }
@@ -110,16 +112,16 @@ namespace Jankiele
                     archivedMessages.Add(message);
                     switch (consumerIsFinished(message))
                     {
-                        case ReadAction.continueNext:
+                        case InboxAction.continueNext:
                             break;
-                        case ReadAction.deleteAndContinueNext:
+                        case InboxAction.deleteAndContinueNext:
                             toDelete.Add(message);
                             break;
-                        case ReadAction.deleteAndStop:
+                        case InboxAction.deleteAndStop:
                             toDelete.Add(message);
                             stop = true;
                             break;
-                        case ReadAction.justStop:
+                        case InboxAction.justStop:
                             stop = true;
                             break;
                     }
@@ -151,18 +153,19 @@ namespace Jankiele
                                     new Message(myID, MessageType.IDReturn, message.Contents, myStage, myColor)
                                     );
                             }
-                            return ReadAction.deleteAndContinueNext;
+                            return InboxAction.deleteAndContinueNext;
                         case MessageType.IDReturn:
                             neighboursThatReturnedMessage.Add(message.SenderID);
                             idToIndex[message.SenderID] = message.ContentsAsInt;
                             indexToID[message.ContentsAsInt] = message.SenderID;
-                            return ReadAction.deleteAndContinueNext;
+                            return InboxAction.deleteAndContinueNext;
                     }
-                return ReadAction.continueNext;
+                return InboxAction.continueNext;
             });
 
             if (stillCompetingNeighbours.SetEquals(neighboursThatReturnedMessage))
             {
+                myState = JankielState.doneExchangingInts;
                 displayStatus($" exchanged IDs fine {stillCompetingNeighbours.Count}");
             }
             else
@@ -193,23 +196,23 @@ namespace Jankiele
                                     displayStatus($" waits for {participantsLeft} messages received participant {message.SenderID}");
 
                                     if (participantsLeft == 0)
-                                        return ReadAction.deleteAndStop;
+                                        return InboxAction.deleteAndStop;
                                     else
-                                        return ReadAction.deleteAndContinueNext;
+                                        return InboxAction.deleteAndContinueNext;
                                 case MessageType.FinishedPlayingCymbals:
                                     stillCompetingNeighbours.Remove(message.SenderID);
                                     participantsLeft--;
                                     displayStatus($" waits for {participantsLeft} messages received finished playing by {message.SenderID}");
 
                                     if (participantsLeft == 0)
-                                        return ReadAction.deleteAndStop;
+                                        return InboxAction.deleteAndStop;
                                     else
-                                        return ReadAction.deleteAndContinueNext;
+                                        return InboxAction.deleteAndContinueNext;
                             }
                         if (message.Color < myColor)
-                            return ReadAction.deleteAndContinueNext;
+                            return InboxAction.deleteAndContinueNext;
                         else
-                            return ReadAction.continueNext;
+                            return InboxAction.continueNext;
                     });
 
                 }
@@ -245,15 +248,15 @@ namespace Jankiele
                                 {
                                     case MessageType.Dunno:
                                         displayStatus($" received dunno from {message.SenderID}");
-                                        return ReadAction.deleteAndContinueNext;
+                                        return InboxAction.deleteAndContinueNext;
                                     case MessageType.NotParticipatingInThisStage:
                                         displayStatus($" received not participating from {message.SenderID}");
                                         notParticipating.Add(message.SenderID);
                                         participatingThisStage.Remove(message.SenderID);
                                         if (participatingThisStage.Count == 0)
-                                            return ReadAction.deleteAndStop;
+                                            return InboxAction.deleteAndStop;
                                         else
-                                            return ReadAction.deleteAndContinueNext;
+                                            return InboxAction.deleteAndContinueNext;
                                     case MessageType.MyIntBroadcast:
                                         if (message.ContentsAsInt > myInt)
                                         {
@@ -261,14 +264,15 @@ namespace Jankiele
                                         }
                                         ++receivedInts;
                                         if (receivedInts == participatingThisStage.Count)
-                                            return ReadAction.deleteAndStop;
+                                            return InboxAction.deleteAndStop;
                                         else
-                                            return ReadAction.deleteAndContinueNext;
+                                            return InboxAction.deleteAndContinueNext;
                                 }
-                            return ReadAction.continueNext;
+                            return InboxAction.continueNext;
                         });
                     }
 
+                    //LubyMIS algorithm
                     if (superiorNeighbours.Count == 0)
                     {
                         myState = JankielState.elected;
@@ -308,9 +312,9 @@ namespace Jankiele
                                 {
                                     case MessageType.NowElected:
                                         electedDuringThisStage.Add(message.SenderID);
-                                        return ReadAction.deleteAndStop;
+                                        return InboxAction.deleteAndStop;
                                 }
-                            return ReadAction.continueNext;
+                            return InboxAction.continueNext;
                         });
 
                         if (electedDuringThisStage.Count > 0)

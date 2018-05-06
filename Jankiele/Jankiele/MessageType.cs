@@ -11,12 +11,9 @@ namespace Jankiele
         IDBroadcast,
         FinishedPlayingCymbals,
         NowElected,
-        NullMessage,
         MyIntBroadcast,
         NotParticipatingInThisStage,
         IDReturn,
-        ProceedToNextStage,
-        AreYouReadyForThisColor,
         ParticipatingInThisColor,
         Dunno
     }
@@ -30,11 +27,7 @@ namespace Jankiele
         doneExchangingInts,
         dunno
     }
-    public enum InboxType
-    {
-        nothingSpecial
-    }
-    public enum ReadAction
+    public enum InboxAction
     {
         continueNext,
         deleteAndContinueNext,
