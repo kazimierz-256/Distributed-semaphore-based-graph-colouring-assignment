@@ -22,7 +22,8 @@ namespace Jankiele
 
         public static IEnumerable<JankielPerson> CreateJankiels(IEnumerable<Tuple<double, double>> coordinates)
         {
-            var random = new Random(10);
+            // select 10 for more optimal solution
+            var random = new Random(0);
             var alreadyUsedIDs = new HashSet<int>();
             var pool = int.MaxValue;
             int getNewID()

@@ -9,7 +9,7 @@ namespace Jankiele
 {
     public class JankielSetup
     {
-        public const double maximumJankielHearingDistance = 3;
+        public const double maximumJankielHearingDistance = 3.000001d;
         public static double EuclideanDistance(
             Tuple<double, double> position1,
             Tuple<double, double> position2)
@@ -20,8 +20,7 @@ namespace Jankiele
                 * (position1.Item2 - position2.Item2));
 
         public static IEnumerable<Thread> PrepareJankiels(IEnumerable<JankielPerson> jankiels)
-        {
-            return jankiels.Select(jankiel => new Thread(() =>
+        => jankiels.Select(jankiel => new Thread(() =>
             {
                 jankiel.AddNeighbours(jankiels.Where(jankielPerson =>
                 {
@@ -30,6 +29,6 @@ namespace Jankiele
                 }));
                 jankiel.Launch();
             }));
-        }
+
     }
 }
